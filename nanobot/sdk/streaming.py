@@ -15,6 +15,7 @@ from nanobot.sdk.types import (
     STREAM_EVENT_TOOL_FAILED,
     STREAM_EVENT_TOOL_STARTED,
     RunResult,
+    RunStatus,
     StreamEvent,
 )
 
@@ -40,6 +41,15 @@ class RunStream:
     def done(self) -> bool:
         """Whether the underlying run task has finished."""
         return self._task.done()
+
+    @property
+    def status(self) -> RunStatus | None:
+        """Return the terminal status, or ``None`` while the run is active."""
+        if not self._task.done():
+            return None
+        if self._task.cancelled():
+            return "cancelled"
+        return "failed" if self._task.exception() is not None else self._task.result().status
 
     async def stream_events(self) -> AsyncIterator[StreamEvent]:
         """Yield streaming events for this run.

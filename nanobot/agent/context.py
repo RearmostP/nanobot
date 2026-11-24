@@ -73,9 +73,13 @@ class ContextBuilder:
     _SKIPPABLE_DEFAULTS = {"AGENTS.md", "USER.md"}
     _MEMORY_SKILLS = frozenset({"memory"})
 
-    def __init__(self, workspace: Path, timezone: str | None = None, disabled_skills: list[str] | None = None):
+    def __init__(
+        self, workspace: Path, timezone: str | None = None, disabled_skills: list[str] | None = None,
+        *, instructions: str | None = None,
+    ):
         self.workspace = workspace
         self.timezone = timezone
+        self._instructions = instructions.strip() if instructions is not None else None
         self.memory = MemoryStore(workspace)
         self.skills = SkillsLoader(workspace, disabled_skills=set(disabled_skills) if disabled_skills else None)
 
@@ -99,6 +103,8 @@ class ContextBuilder:
         parts.append(render_template(
             "agent/tool_contract.md", track_source=True, has_cron=has_cron, include_memory=include_memory,
         ))
+        if self._instructions:
+            parts.append(f"# Agent Instructions\n\n{self._instructions}")
 
         project_path = root.expanduser().resolve()
         if project_path != self.workspace.expanduser().resolve():
