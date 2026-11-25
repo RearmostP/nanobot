@@ -1,15 +1,13 @@
 from __future__ import annotations
 
 import asyncio
-import math
-from collections.abc import AsyncIterator, Iterable, Mapping
+from collections.abc import AsyncIterator, Mapping
 from pathlib import Path
 from typing import Any
 
 from nanobot.agent.hook import AgentHook, SDKCaptureHook
 from nanobot.agent.hooks import create_file_edit_activity_hook
 from nanobot.agent.loop import AgentLoop
-from nanobot.agent.tools.base import Tool
 from nanobot.agent.tools.image_generation import register_image_generation_tool
 from nanobot.agent.tools.mcp import MCPProvider
 from nanobot.agent.tools.registry import ToolRegistry
@@ -19,8 +17,6 @@ from nanobot.sdk.clients import MemoryClient, RuntimeClient, SessionClient
 from nanobot.sdk.runtime import (
     build_process_direct_kwargs,
     ensure_single_model_selector,
-    scoped_tool_registry,
-    select_tool_names,
 )
 from nanobot.sdk.streaming import RunStream, SDKStreamEmitter, SDKStreamingHook
 from nanobot.sdk.types import (
@@ -40,7 +36,6 @@ from nanobot.sdk.types import (
     SessionSnapshot,
     StreamEvent,
     StreamEventType,
-    ToolPolicy,
     result_from_response,
 )
 from nanobot.utils.llm_runtime import LLMRuntime
@@ -84,12 +79,10 @@ class Nanobot:
         *,
         config: Config | None = None,
         mcp_provider: MCPProvider | None = None,
-        tool_policy: ToolPolicy | None = None,
     ) -> None:
         self._loop = loop
         self._config = config
         self._mcp_provider = mcp_provider
-        self._tool_policy = tool_policy
         self.sessions = SessionClient(loop)
         self.memory = MemoryClient(loop)
         self.runtime = RuntimeClient(loop)
@@ -102,9 +95,6 @@ class Nanobot:
         workspace: str | Path | None = None,
         model: str | None = None,
         model_preset: str | None = None,
-        instructions: str | None = None,
-        tools: Iterable[Tool] = (),
-        tool_policy: ToolPolicy | None = None,
     ) -> Nanobot:
         """Create a Nanobot instance from a config file.
 
@@ -113,9 +103,6 @@ class Nanobot:
             workspace: Override the workspace directory from config.
             model: Override the instance default model.
             model_preset: Override the instance default model preset.
-            instructions: Trusted host instructions added to the system prompt.
-            tools: Trusted tool implementations to register for this instance.
-            tool_policy: Default selection from the configured and registered tools.
         """
         from nanobot.config.loader import load_config, resolve_config_env_vars
 
@@ -141,26 +128,18 @@ class Nanobot:
         elif model_preset is not None:
             config.agents.defaults.model_preset = model_preset
 
-        registry = ToolRegistry()
-        register_image_generation_tool(config, registry, workspace=config.workspace_path)
-        mcp_provider = MCPProvider.from_config(config, registry)
+        tools = ToolRegistry()
+        register_image_generation_tool(config, tools, workspace=config.workspace_path)
+        mcp_provider = MCPProvider.from_config(config, tools)
         from nanobot.goal.assembly import install_goal
 
         loop = AgentLoop.from_config(
             config,
             hook_factories=[create_file_edit_activity_hook],
-            tool_registry=registry,
+            tool_registry=tools,
             builtin_assembly=install_goal,
-            instructions=instructions,
         )
-        for tool in tools:
-            name = tool.name
-            if not name or name.startswith("mcp_"):
-                raise ValueError(f"Invalid host tool name {name!r}: use a non-empty name outside mcp_")
-            if registry.has(name):
-                raise ValueError(f"Tool {name!r} is already registered")
-            registry.register(tool)
-        return cls(loop, config=config, mcp_provider=mcp_provider, tool_policy=tool_policy)
+        return cls(loop, config=config, mcp_provider=mcp_provider)
 
     def _resolve_override(self, model: str | None, model_preset: str | None) -> LLMRuntime | None:
         return self._loop.runtime_resolver.resolve_override(
@@ -173,31 +152,14 @@ class Nanobot:
         kwargs: dict[str, Any],
         runtime: LLMRuntime | None,
         hooks: list[AgentHook],
-        tool_policy: ToolPolicy | None,
-        timeout_s: float | None,
     ) -> RunResult:
-        if timeout_s is not None and (not math.isfinite(timeout_s) or timeout_s <= 0):
-            raise ValueError("timeout_s must be finite and greater than zero")
         capture = SDKCaptureHook()
         per_run_hooks = [capture, *hooks]
         if runtime is not None:
             kwargs["runtime"] = runtime
-        policies = tuple(policy for policy in (self._tool_policy, tool_policy) if policy is not None)
-        names = (
-            select_tool_names((), *policies)
-            if any(policy.defaults is not None for policy in policies) else None
-        )
-        async with asyncio.timeout(timeout_s):
-            if self._mcp_provider is not None and (
-                names is None or any(name.startswith("mcp_") for name in names)
-            ):
-                await self._mcp_provider.connect()
-            if policies:
-                registry = self._loop.tools
-                if names is None:
-                    names = select_tool_names(registry.tool_names, *policies)
-                kwargs["tools"] = scoped_tool_registry(registry, names)
-            response = await self._loop.process_direct(message, **kwargs, hooks=per_run_hooks)
+        if self._mcp_provider is not None:
+            await self._mcp_provider.connect()
+        response = await self._loop.process_direct(message, **kwargs, hooks=per_run_hooks)
         return result_from_response(response, capture)
 
     async def run(
@@ -214,8 +176,6 @@ class Nanobot:
         hooks: list[AgentHook] | None = None,
         model: str | None = None,
         model_preset: str | None = None,
-        tool_policy: ToolPolicy | None = None,
-        timeout_s: float | None = None,
     ) -> RunResult:
         """Run the agent once and return the result.
 
@@ -234,8 +194,6 @@ class Nanobot:
             hooks: Optional lifecycle hooks for this run.
             model: Override the model for this run only.
             model_preset: Override the model preset for this run only.
-            tool_policy: Override the inherited tool selection for this run.
-            timeout_s: Optional wall-clock deadline in seconds for the turn.
         """
         runtime = self._resolve_override(model, model_preset)
         kwargs = build_process_direct_kwargs(
@@ -247,7 +205,7 @@ class Nanobot:
             ephemeral=ephemeral,
             attributes=attributes,
         )
-        return await self._execute_turn(message, kwargs, runtime, hooks or [], tool_policy, timeout_s)
+        return await self._execute_turn(message, kwargs, runtime, hooks or [])
 
     async def run_streamed(
         self,
@@ -263,8 +221,6 @@ class Nanobot:
         hooks: list[AgentHook] | None = None,
         model: str | None = None,
         model_preset: str | None = None,
-        tool_policy: ToolPolicy | None = None,
-        timeout_s: float | None = None,
     ) -> RunStream:
         """Start a streamed run and return a handle for events and final result."""
         override_runtime = self._resolve_override(model, model_preset)
@@ -316,9 +272,7 @@ class Nanobot:
             )
             kwargs["on_runtime_admitted"] = _emit_run_started
             try:
-                result = await self._execute_turn(
-                    message, kwargs, override_runtime, stream_hooks, tool_policy, timeout_s,
-                )
+                result = await self._execute_turn(message, kwargs, override_runtime, stream_hooks)
                 await _emit_run_started()
                 await emitter.text_completed(resuming=False, force=False)
                 await emitter.emit(StreamEvent(
@@ -357,8 +311,6 @@ class Nanobot:
         hooks: list[AgentHook] | None = None,
         model: str | None = None,
         model_preset: str | None = None,
-        tool_policy: ToolPolicy | None = None,
-        timeout_s: float | None = None,
     ) -> AsyncIterator[StreamEvent]:
         """Stream events for one agent turn."""
         run = await self.run_streamed(
@@ -373,8 +325,6 @@ class Nanobot:
             hooks=hooks,
             model=model,
             model_preset=model_preset,
-            tool_policy=tool_policy,
-            timeout_s=timeout_s,
         )
         try:
             async for event in run.stream_events():

@@ -1,14 +1,11 @@
 from __future__ import annotations
 
-from collections.abc import Sequence
 from copy import deepcopy
 from dataclasses import dataclass, field
 from typing import Any, Literal, TypeAlias, cast
 
 from nanobot.providers.base import LLMUsage
 from nanobot.runtime_context import public_history_messages
-
-RunStatus: TypeAlias = Literal["completed", "failed", "cancelled"]
 
 StreamEventType: TypeAlias = Literal[
     "run.started",
@@ -48,22 +45,6 @@ STREAM_EVENT_TYPES: tuple[StreamEventType, ...] = (
 )
 
 
-@dataclass(frozen=True, slots=True)
-class ToolPolicy:
-    """Tool names for an SDK turn; ``None`` inherits the defaults and ``()`` clears them."""
-
-    defaults: Sequence[str] | None = None
-    add: Sequence[str] = ()
-    remove: Sequence[str] = ()
-
-    def __post_init__(self) -> None:
-        for field_name, names in (("defaults", self.defaults), ("add", self.add), ("remove", self.remove)):
-            if isinstance(names, str):
-                raise TypeError(f"ToolPolicy.{field_name} must be a sequence of tool names, not a string")
-            if names is not None:
-                object.__setattr__(self, field_name, tuple(names))
-
-
 @dataclass(slots=True)
 class RunResult:
     """Result of a single agent run."""
@@ -75,11 +56,6 @@ class RunResult:
     stop_reason: str | None = None
     error: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
-
-    @property
-    def status(self) -> RunStatus:
-        """Distinguish a completed turn from a failure returned by the runtime."""
-        return "failed" if self.error is not None else "completed"
 
 
 @dataclass(slots=True)

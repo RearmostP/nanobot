@@ -401,41 +401,6 @@ class AuditHook(AgentHook):
 result = await bot.run("Review this change", hooks=[AuditHook()])
 ```
 
-### Embed an agent with host tools
-
-Keep using `Nanobot.from_config()` to select the runtime and model preset. Pass `instructions` to add trusted host instructions to the system prompt, and pass `tools` to register `Tool` implementations. Each tool supplies a name, description, JSON parameter schema, and async `execute()` method. A host tool cannot replace an existing tool or use the reserved `mcp_` prefix.
-
-`ToolPolicy` selects names from the configured and registered tools. At construction, `defaults=None` starts with all available tools. For one run, `defaults=None` inherits the instance's selection and `defaults=()` starts with an empty set. The effective selection is `(defaults | add) - remove`; removal wins and all selected names must be registered. The executor also enforces the existing session and workspace restrictions. A per-run policy does not modify the instance or a turn already in progress.
-
-```python
-from nanobot import Nanobot, ToolPolicy
-
-async with Nanobot.from_config(
-    "embed/config.json",
-    model_preset="fast",
-    instructions="Answer directly unless the user asks to check an order.",
-    tools=(lookup_order,),  # A trusted Tool instance supplied by the host.
-    tool_policy=ToolPolicy(defaults=(lookup_order.name,)),
-) as bot:
-    result = await bot.run(
-        "Explain the return policy without looking anything up.",
-        session_key="embed:customer",
-        tool_policy=ToolPolicy(defaults=()),
-        timeout_s=15,
-    )
-    print(result.status, result.content)
-```
-
-An explicit selection with no MCP names does not open MCP connections for the turn. Tool selection governs the tools offered to and executed for the model; it is not a sandbox for host Python code or an authorization rule for the SDK's other operations. Keep instructions, registered tools, and tool policies under host control. Do not put credentials in instructions or model-visible tool definitions.
-
-The [standalone embedding example](../examples/sdk_embedding.py) can answer directly, count words with a host tool, and start, check, or cancel background work. Run it from the repository root with a separate SDK instance config and workspace:
-
-```bash
-python -m examples.sdk_embedding /path/to/embed/config.json /path/to/embed/workspace
-```
-
-Try a short question, then “Count the words in hello from nanobot,” and then “Start a background task to outline a two-day trip.” The host returns a task ID immediately; ask for that task's status or request cancellation in the same chat. The worker runs in a different session with no tools. A tool call ID identifies one call to the host; the task ID identifies the background job after that call has ended.
-
 ## Where To Go Next
 
 The SDK page is the programming entry point. The fuller conceptual and configuration docs remain the source of truth for the runtime around it:
@@ -452,7 +417,7 @@ The SDK page is the programming entry point. The fuller conceptual and configura
 
 ## API Reference
 
-### `Nanobot.from_config(...)`
+### `Nanobot.from_config(config_path=None, *, workspace=None, model=None, model_preset=None)`
 
 Create a `Nanobot` instance from a config file.
 
@@ -462,9 +427,6 @@ Create a `Nanobot` instance from a config file.
 | `workspace` | `str \| Path \| None` | `None` | Override the workspace directory from config. |
 | `model` | `str \| None` | `None` | Override the instance default model. |
 | `model_preset` | `str \| None` | `None` | Override the instance default model preset from `config.json`. |
-| `instructions` | `str \| None` | `None` | Add trusted host instructions to the system prompt. |
-| `tools` | `Iterable[Tool]` | `()` | Register additional tools owned by the host. |
-| `tool_policy` | `ToolPolicy \| None` | `None` | Select the default tools for this instance. |
 
 Raises `FileNotFoundError` if an explicit config path does not exist. Raises `ValueError` if both `model` and `model_preset` are provided.
 
@@ -485,12 +447,8 @@ Run the agent once and return a `RunResult`.
 | `hooks` | `list[AgentHook] \| None` | `None` | Lifecycle hooks for this run only. |
 | `model` | `str \| None` | `None` | Override the model for this run only. |
 | `model_preset` | `str \| None` | `None` | Override the model preset for this run only. |
-| `tool_policy` | `ToolPolicy \| None` | `None` | Select tools for this run without changing the instance defaults. |
-| `timeout_s` | `float \| None` | `None` | Request cancellation after this many seconds. Must be finite and positive. |
 
 Without an override, a run uses the preset saved in its session, or the configured default when that session has no saved selection. `model` and `model_preset` are mutually exclusive per-run overrides; they do not change the saved session selection or `bot.runtime.model` after the run completes.
-
-The optional deadline includes MCP connection time and waiting for the session turn. It raises `TimeoutError` after cancellation and cleanup; cancellation is cooperative and does not undo external effects. The configured `agents.defaults.maxToolIterations` is the ordinary iteration budget, not a hard limit on provider requests: a goal or a final summary can need additional calls.
 
 ### `await bot.run_streamed(...)`
 
@@ -522,12 +480,9 @@ async for event in bot.stream("Generate a long answer"):
 | `await wait()` | Wait for the run to finish and return `RunResult`. |
 | `await text()` | Wait for the run to finish and return `RunResult.content`. |
 | `await cancel()` | Cancel the run and release stream resources. |
-| `await aclose()` | Close the stream and cancel the run if it is still active. |
-| `status` | `None` while active; `"completed"`, `"failed"`, or `"cancelled"` after the turn ends. |
+| `await aclose()` | Close the stream; equivalent cleanup primitive for `async with` / manual lifecycle code. |
 
 SDK runs with different session keys may overlap, including runs with per-run `model` or `model_preset` overrides. Each run receives an immutable runtime without mutating the instance default. Runs sharing one session key remain serialized.
-
-For an admitted turn, `run.started` precedes the text and tool events. Match tool events with the same `tool_call_id`. A returned result appears in `run.completed`; check its `status` to tell whether the model succeeded. An exception in the run emits `run.failed` and is re-raised by `wait()`. Explicit cancellation closes the stream and makes `wait()` raise `CancelledError` if the run was cancelled; use `RunStream.status` as the terminal state even when the event consumer has closed.
 
 ### `StreamEvent`
 
@@ -582,7 +537,6 @@ async with Nanobot.from_config() as bot:
 | `usage` | `dict[str, int]` | Token usage reported or estimated by the runtime. |
 | `stop_reason` | `str \| None` | Why the run stopped, such as `"completed"` or `"max_iterations"`. |
 | `error` | `str \| None` | Error text when the run failed inside the agent runtime. |
-| `status` | `RunStatus` | `"failed"` when the runtime returned an error; otherwise `"completed"`. |
 | `metadata` | `dict` | Outbound metadata such as latency. |
 
 ## Session, Memory, And Runtime Helpers

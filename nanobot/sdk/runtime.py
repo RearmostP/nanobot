@@ -1,31 +1,9 @@
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping
+from collections.abc import Mapping
 from typing import Any
 
-from nanobot.agent.tools.registry import ToolRegistry
-from nanobot.sdk.types import ToolPolicy
 from nanobot.session.manager import SessionPolicy
-
-
-def select_tool_names(defaults: Iterable[str], *policies: ToolPolicy) -> set[str]:
-    names = set(defaults)
-    for policy in policies:
-        if policy.defaults is not None:
-            names = set(policy.defaults)
-        names.update(policy.add)
-        names.difference_update(policy.remove)
-    return names
-
-
-def scoped_tool_registry(registry: ToolRegistry, names: set[str]) -> ToolRegistry:
-    scoped = ToolRegistry()
-    for name in sorted(names):
-        tool = registry.get(name)
-        if tool is None:
-            raise ValueError(f"Tool {name!r} is not registered for this SDK instance")
-        scoped.register(tool)
-    return scoped
 
 
 def ensure_single_model_selector(

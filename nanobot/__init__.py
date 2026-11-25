@@ -5,7 +5,6 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from .agent.tools.base import Tool
     from .agent.tools.context import RequestContext
     from .bus.runtime_events import SessionTurnPersisted
     from .nanobot import (
@@ -30,7 +29,6 @@ if TYPE_CHECKING:
         StreamEventType,
     )
     from .runtime_context import RuntimeContextBlock, RuntimeContextProvider
-    from .sdk.types import RunStatus, ToolPolicy
 
 
 def _read_pyproject_version() -> str | None:
@@ -57,7 +55,6 @@ _LAZY_EXPORTS = {
     "LLMUsage": ".llm_usage.types",
     "RunStream": ".nanobot",
     "RunResult": ".nanobot",
-    "RunStatus": ".sdk.types",
     "RequestContext": ".agent.tools.context",
     "RuntimeContextBlock": ".runtime_context",
     "RuntimeContextProvider": ".runtime_context",
@@ -77,8 +74,6 @@ _LAZY_EXPORTS = {
     "StreamEvent": ".nanobot",
     "StreamEventType": ".nanobot",
     "SessionTurnPersisted": ".bus.runtime_events",
-    "Tool": ".agent.tools.base",
-    "ToolPolicy": ".sdk.types",
 }
 
 
@@ -97,7 +92,6 @@ __all__ = [
     "Nanobot",
     "LLMUsage",
     "RunResult",
-    "RunStatus",
     "RequestContext",
     "RuntimeContextBlock",
     "RuntimeContextProvider",
@@ -118,6 +112,4 @@ __all__ = [
     "StreamEvent",
     "StreamEventType",
     "SessionTurnPersisted",
-    "Tool",
-    "ToolPolicy",
 ]
